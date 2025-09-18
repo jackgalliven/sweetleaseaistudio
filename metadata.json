@@ -1,0 +1,5 @@
+{
+  "name": "Sweetlease Trial",
+  "description": "An AI-powered application to upload, analyze, and manage property lease agreements. It extracts key terms, provides summaries, and tracks critical dates to support SME tenants.",
+  "requestFramePermissions": []
+}
