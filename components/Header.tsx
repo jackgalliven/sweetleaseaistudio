@@ -1,13 +1,32 @@
 import React from 'react';
 import { User } from '../types';
+import { redirectToCheckout } from '../services/stripeService';
+
+// This will read from your .env.local file in a Vite project.
+const STRIPE_PRO_PRICE_ID = import.meta.env.VITE_STRIPE_PRO_PRICE_ID || "price_YOUR_PRO_PRICE_ID";
 
 interface HeaderProps {
   user: User;
   onNavigateProfile: () => void;
   onNavigateHome: () => void;
+  showToast: (message: string, type?: 'success' | 'error') => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onNavigateProfile, onNavigateHome }) => {
+const Header: React.FC<HeaderProps> = ({ user, onNavigateProfile, onNavigateHome, showToast }) => {
+    
+  const handleUpgradeClick = async () => {
+    if (STRIPE_PRO_PRICE_ID.includes("YOUR_")) {
+      showToast("Upgrade functionality is not configured. Please add VITE_STRIPE_PRO_PRICE_ID to your .env.local file.");
+      return;
+    }
+    try {
+      await redirectToCheckout(STRIPE_PRO_PRICE_ID);
+    } catch (error) {
+      console.error(error);
+      showToast((error as Error).message);
+    }
+  };
+
   return (
     <header className="bg-white border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -16,6 +35,9 @@ const Header: React.FC<HeaderProps> = ({ user, onNavigateProfile, onNavigateHome
           <div className="flex items-center space-x-8">
             <div className="flex-shrink-0 flex items-center space-x-2">
                <button onClick={onNavigateHome} className="text-2xl font-bold text-slate-900 font-sans">sweetlease</button>
+               {user.subscriptionStatus === 'pro' && (
+                  <span className="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">Pro</span>
+               )}
                {user.role === 'admin' && (
                   <span className="bg-amber-100 text-amber-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">Admin</span>
                )}
@@ -25,15 +47,16 @@ const Header: React.FC<HeaderProps> = ({ user, onNavigateProfile, onNavigateHome
             </nav>
           </div>
           
-          {/* Right section: Search and Profile */}
+          {/* Right section: Profile and Upgrade */}
           <div className="flex items-center space-x-4">
-            <div className="relative">
-                <input
-                    type="text"
-                    placeholder="ask ai about your property..."
-                    className="hidden lg:block w-72 pl-4 pr-4 py-2 border border-slate-300 rounded-md text-sm focus:ring-brand-secondary focus:border-brand-secondary"
-                />
-            </div>
+            {user.subscriptionStatus === 'free' && user.role !== 'admin' && (
+              <button
+                onClick={handleUpgradeClick}
+                className="hidden sm:block bg-brand-accent hover:bg-amber-500 text-white font-bold py-2 px-4 rounded-lg transition-colors text-sm"
+              >
+                Upgrade
+              </button>
+            )}
             <div className="flex-shrink-0">
               <button 
                 onClick={onNavigateProfile}

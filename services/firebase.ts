@@ -1,18 +1,25 @@
-import { initializeApp } from 'firebase/app';
+// Fix: Use a named import for `initializeApp` as per the Firebase v9+ modular SDK.
+import { initializeApp } from "firebase/app";
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 
-// Your web app's Firebase configuration
-// IMPORTANT: Replace this with your actual Firebase project configuration
+// This configuration is now ready for a Vite environment.
+// It will attempt to read from a .env.local file, and if it fails,
+// it will use the placeholder values without crashing the app.
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "YOUR_FIREBASE_API_KEY",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "YOUR_MESSAGING_SENDER_ID",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "YOUR_APP_ID"
 };
+
+// This provides a clear, non-crashing warning if the config is not updated.
+if (firebaseConfig.apiKey.startsWith("YOUR_")) {
+    console.warn("Firebase configuration is using placeholder values. Please create a .env.local file and add your VITE_FIREBASE keys for the app to function correctly.");
+}
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);

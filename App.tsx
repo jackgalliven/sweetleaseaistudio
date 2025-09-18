@@ -1,22 +1,24 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
-import { AppState, LeaseData, OcrResult, LeaseAnalysis, User } from './types';
+import { AppState, LeaseData, OcrResult, LeaseAnalysis, User, ToastMessage } from './types';
 import FileUpload from './components/FileUpload';
 import ProcessingIndicator from './components/ProcessingIndicator';
 import Dashboard from './components/Dashboard';
 import Header from './components/Header';
+import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import ProfilePage from './components/ProfilePage';
+import ToastNotification from './components/ToastNotification';
 import { extractTextFromPdf } from './services/ocrService';
-import { analyzeLease, answerFromLease } from './services/geminiService';
+import { analyzeLease } from './services/geminiService';
 import { auth, db } from './services/firebase';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, query, where, getDocs, addDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, setDoc, getDoc } from 'firebase/firestore';
 
 
 const getInitials = (email: string) => {
+    if (!email) return '??';
     const parts = email.split('@')[0].split(/[._-]/);
-    if (parts.length > 1) {
+    if (parts.length > 1 && parts[0] && parts[parts.length - 1]) {
       return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     }
     return email.substring(0, 2).toUpperCase();
@@ -24,9 +26,9 @@ const getInitials = (email: string) => {
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [appState, setAppState] = useState<AppState>(AppState.LOGIN);
+  const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [processingMessage, setProcessingMessage] = useState<string>('Starting process...');
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   
   // Current analysis state
@@ -38,23 +40,51 @@ const App: React.FC = () => {
   // User's saved leases
   const [savedLeases, setSavedLeases] = useState<LeaseAnalysis[]>([]);
 
+  const showToast = (message: string, type: 'success' | 'error' = 'error') => {
+    setToast({ id: Date.now(), message, type });
+  };
+
   // Effect to listen for auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser && firebaseUser.email) {
-        const user: User = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            initials: getInitials(firebaseUser.email),
-            // In a real app, you might get the role from custom claims or Firestore
-            role: firebaseUser.email === 'admin@sweetlease.app' ? 'admin' : 'user',
-        };
+        const userDocRef = doc(db, "users", firebaseUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        let user: User;
+
+        if (userDocSnap.exists()) {
+            const docData = userDocSnap.data();
+            user = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+                initials: getInitials(firebaseUser.email),
+                role: docData.role || (firebaseUser.email === 'admin@sweetlease.app' ? 'admin' : 'user'),
+                subscriptionStatus: docData.subscriptionStatus || 'free',
+            };
+        } else {
+            // New user, create a profile document
+            user = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+                initials: getInitials(firebaseUser.email),
+                role: firebaseUser.email === 'admin@sweetlease.app' ? 'admin' : 'user',
+                subscriptionStatus: 'free',
+            };
+            await setDoc(userDocRef, { 
+                uid: user.uid,
+                email: user.email,
+                role: user.role,
+                subscriptionStatus: user.subscriptionStatus,
+            });
+        }
+
         setCurrentUser(user);
         setAppState(AppState.UPLOAD);
         await fetchSavedLeases(user.uid);
       } else {
         setCurrentUser(null);
-        setAppState(AppState.LOGIN);
+        setAppState(AppState.LANDING);
         setSavedLeases([]);
       }
       setAuthLoading(false);
@@ -74,15 +104,18 @@ const App: React.FC = () => {
         setSavedLeases(leases);
     } catch (e) {
         console.error("Error fetching leases from Firestore: ", e);
-        setError("Could not load your saved leases.");
+        showToast("Could not load your saved leases.");
     }
   };
 
 
   const handleFileUpload = (file: File) => {
+    if (currentUser?.subscriptionStatus === 'free' && savedLeases.length >= 3) {
+      showToast("You've reached the 3-lease limit for the free plan. Please upgrade.");
+      return;
+    }
     setSelectedFile(file);
     setAppState(AppState.PROCESSING);
-    setError(null);
     setCurrentLeaseId(null); // It's a new analysis
   };
   
@@ -106,7 +139,7 @@ const App: React.FC = () => {
     } catch (err) {
       console.error("Processing failed:", err);
       const errorMessage = err instanceof Error ? err.message : "An unknown error occurred during processing.";
-      setError(`Failed to process lease. ${errorMessage}`);
+      showToast(`Failed to process lease. ${errorMessage}`);
       setAppState(AppState.UPLOAD);
     }
   }, [selectedFile]);
@@ -121,7 +154,6 @@ const App: React.FC = () => {
     setSelectedFile(null);
     setLeaseData(null);
     setFullText('');
-    setError(null);
     setCurrentLeaseId(null);
   };
 
@@ -133,10 +165,10 @@ const App: React.FC = () => {
   const handleSignOut = async () => {
     try {
         await signOut(auth);
-        // The onAuthStateChanged listener will handle state cleanup
+        // The onAuthStateChanged listener will handle state cleanup and navigation
     } catch (error) {
         console.error("Error signing out: ", error);
-        setError("Failed to sign out. Please try again.");
+        showToast("Failed to sign out. Please try again.");
     }
   };
 
@@ -152,9 +184,10 @@ const App: React.FC = () => {
         const docRef = await addDoc(collection(db, "leases"), newLease);
         setSavedLeases(prev => [...prev, { ...newLease, id: docRef.id }]);
         setCurrentLeaseId(docRef.id);
+        showToast("Lease saved successfully!", "success");
     } catch (e) {
         console.error("Error adding document to Firestore: ", e);
-        setError("Could not save your lease analysis. Please try again.");
+        showToast("Could not save your lease analysis. Please try again.");
     }
   };
 
@@ -168,15 +201,16 @@ const App: React.FC = () => {
   
   const renderContent = () => {
     if (authLoading) {
-        return <ProcessingIndicator message="Authenticating..." />;
-    }
-    if (!currentUser) {
-      return <LoginPage />;
+        return <ProcessingIndicator message="Loading Sweetlease..." />;
     }
     
     switch (appState) {
+      case AppState.LANDING:
+        return <LandingPage onNavigateToAuth={() => setAppState(AppState.LOGIN)} />;
+      case AppState.LOGIN:
+        return <LoginPage onBack={() => setAppState(AppState.LANDING)} showToast={showToast} />;
       case AppState.PROFILE:
-        return <ProfilePage user={currentUser} savedLeases={savedLeases} onViewLease={handleViewSavedLease} onSignOut={handleSignOut} />;
+        return currentUser && <ProfilePage user={currentUser} savedLeases={savedLeases} onViewLease={handleViewSavedLease} onSignOut={handleSignOut} showToast={showToast} />;
       case AppState.PROCESSING:
         return <ProcessingIndicator message={processingMessage} />;
       case AppState.RESULTS:
@@ -192,15 +226,18 @@ const App: React.FC = () => {
         );
       case AppState.UPLOAD:
       default:
-        return <FileUpload onFileUpload={handleFileUpload} error={error} />;
+        return <FileUpload onFileUpload={handleFileUpload} />;
     }
   };
+  
+  const showHeader = currentUser && appState !== AppState.LANDING && appState !== AppState.LOGIN;
 
   return (
     <div className="min-h-screen text-slate-800">
-      {currentUser && <Header user={currentUser} onNavigateProfile={() => setAppState(AppState.PROFILE)} onNavigateHome={() => setAppState(AppState.UPLOAD)} />}
-      <main className="py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <ToastNotification toast={toast} onClose={() => setToast(null)} />
+      {showHeader && <Header user={currentUser} onNavigateProfile={() => setAppState(AppState.PROFILE)} onNavigateHome={() => setAppState(AppState.UPLOAD)} showToast={showToast} />}
+      <main className={showHeader ? "py-8" : ""}>
+        <div className={appState === AppState.LANDING ? "w-full max-w-full p-0" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"}>
             {renderContent()}
         </div>
       </main>

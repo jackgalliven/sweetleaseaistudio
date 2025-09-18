@@ -3,10 +3,9 @@ import React, { useState, useCallback } from 'react';
 
 interface FileUploadProps {
   onFileUpload: (file: File) => void;
-  error: string | null;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, error }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload }) => {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -40,13 +39,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, error }) => {
         <h2 className="text-2xl font-bold text-slate-900 mb-1 lowercase font-sans">upload your lease agreement</h2>
         <p className="text-slate-500 mb-6">upload a PDF document to automatically extract and summarize key terms.</p>
         
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6" role="alert">
-            <strong className="font-bold">Error: </strong>
-            <span className="block sm:inline">{error}</span>
-          </div>
-        )}
-
         <label
           htmlFor="file-upload"
           onDragEnter={handleDragEvents}

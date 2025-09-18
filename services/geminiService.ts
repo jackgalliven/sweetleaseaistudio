@@ -6,12 +6,11 @@ const callFirebaseFunction = async (functionName: string, data: any) => {
     try {
         const func = httpsCallable(functions, functionName);
         const response = await func(data);
-        // The callable function returns an object with a 'data' property.
         return response.data as string;
-    } catch (error) {
+    } catch (error: any) {
         console.error(`Error calling Firebase Function '${functionName}':`, error);
-        // Provide a more user-friendly error message
-        throw new Error("The AI service is currently unavailable. Please try again later.");
+        // Provide a more user-friendly error message from the callable function error
+        throw new Error(error.message || "The AI service is currently unavailable. Please try again later.");
     }
 }
 

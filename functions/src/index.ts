@@ -1,23 +1,34 @@
 
-import {onCall} from "firebase-functions/v2/https";
+
+// Fix: Explicitly import Request and Response to fix type inference issues where properties on req and res were not found.
+// `Response` is imported from `express`, not `firebase-functions/v2/https`.
+import {onCall, onRequest, Request} from "firebase-functions/v2/https";
+import type {Response} from "express";
 import * as logger from "firebase-functions/logger";
 import {initializeApp} from "firebase-admin/app";
+import {getFirestore} from "firebase-admin/firestore";
 import {GoogleGenAI, Type} from "@google/genai";
+import Stripe from "stripe";
 
 // Initialize Firebase Admin SDK
 initializeApp();
+const db = getFirestore();
 
-// Access secret API key
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Access secret API keys from environment variables
+const GEMINI_API_KEY = process.env.API_KEY;
 if (!GEMINI_API_KEY) {
-  logger.error(
-    "GEMINI_API_KEY is not set in environment variables.",
-    {structuredData: true},
-  );
-  throw new Error("API key not configured.");
+  logger.error("API_KEY is not set in environment variables.");
+  throw new Error("Gemini API key not configured.");
+}
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+if (!STRIPE_SECRET_KEY) {
+  logger.error("STRIPE_SECRET_KEY is not set in environment variables.");
+  throw new Error("Stripe secret key not configured.");
 }
 
 const ai = new GoogleGenAI({apiKey: GEMINI_API_KEY});
+const stripe = new Stripe(STRIPE_SECRET_KEY);
 
 const leaseSchema = {
   type: Type.OBJECT,
@@ -117,8 +128,7 @@ export const analyzeLease = onCall(async (request) => {
     throw new Error("Invalid request: leaseText is required.");
   }
 
-  logger.info("Analyzing lease for user: " + request.auth.uid,
-    {structuredData: true});
+  logger.info("Analyzing lease for user: " + request.auth.uid);
 
   try {
     const response = await ai.models.generateContent({
@@ -149,8 +159,7 @@ export const answerFromLease = onCall(async (request) => {
     throw new Error("Invalid request: leaseText and question are required.");
   }
 
-  logger.info(`Answering question for user: ${request.auth.uid}`,
-    {structuredData: true});
+  logger.info(`Answering question for user: ${request.auth.uid}`);
 
   const prompt = `
     You are a helpful legal assistant. Answer the user's question based ONLY 
@@ -178,3 +187,80 @@ export const answerFromLease = onCall(async (request) => {
     throw new Error("The AI model could not answer the question.");
   }
 });
+
+
+export const createCheckoutSession = onCall(async (request) => {
+  if (!request.auth) {
+    throw new Error("Authentication required to create checkout session.");
+  }
+  const uid = request.auth.uid;
+  const {priceId} = request.data;
+  const appUrl = process.env.APP_URL;
+
+  if (!priceId) {
+    throw new Error("Price ID is required.");
+  }
+  if (!appUrl) {
+      logger.error("APP_URL is not set in environment variables.");
+      throw new Error("Application URL is not configured.");
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "subscription",
+      line_items: [{
+        price: priceId,
+        quantity: 1,
+      }],
+      success_url: `${appUrl}/profile`,
+      cancel_url: `${appUrl}/profile`,
+      client_reference_id: uid, // Pass the Firebase UID to the session
+    });
+    return {sessionId: session.id};
+  } catch (e) {
+    logger.error("Stripe checkout session creation failed", e);
+    throw new Error("Failed to create Stripe session.");
+  }
+});
+
+export const stripeWebhook = onRequest(
+  {secrets: ["STRIPE_WEBHOOK_SECRET"]},
+  // Fix: Explicitly type req and res parameters to resolve errors with accessing their properties.
+  async (req: Request, res: Response) => {
+    const sig = req.headers["stripe-signature"] as string;
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
+
+    let event: Stripe.Event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+    } catch (err: any) {
+      logger.error("Webhook signature verification failed.", err.message);
+      res.status(400).send(`Webhook Error: ${err.message}`);
+      return;
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const userId = session.client_reference_id;
+
+      if (!userId) {
+        logger.error("No userId in checkout session", {id: session.id});
+        res.status(400).send("Webhook Error: Missing client_reference_id");
+        return;
+      }
+
+      try {
+        const userRef = db.collection("users").doc(userId);
+        await userRef.update({subscriptionStatus: "pro"});
+        logger.info(`Successfully updated user ${userId} to pro plan.`);
+      } catch (err) {
+        logger.error(`Failed to update user ${userId} subscription.`, err);
+        res.status(500).send("Internal Server Error");
+        return;
+      }
+    }
+
+    res.status(200).send();
+  });

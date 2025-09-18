@@ -1,5 +1,23 @@
+// Fix for Vite env variables typescript error since a new .d.ts file cannot be added.
+// This informs TypeScript about the shape of import.meta.env provided by Vite.
+// Reference: https://vitejs.dev/guide/env-and-mode.html#intellisense-for-typescript
+interface ImportMetaEnv {
+  readonly VITE_STRIPE_PRO_PRICE_ID: string;
+  readonly VITE_FIREBASE_API_KEY: string;
+  readonly VITE_FIREBASE_AUTH_DOMAIN: string;
+  readonly VITE_FIREBASE_PROJECT_ID: string;
+  readonly VITE_FIREBASE_STORAGE_BUCKET: string;
+  readonly VITE_FIREBASE_MESSAGING_SENDER_ID: string;
+  readonly VITE_FIREBASE_APP_ID: string;
+  readonly VITE_STRIPE_PUBLISHABLE_KEY: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
 
 export enum AppState {
+  LANDING,
   LOGIN,
   UPLOAD,
   PROCESSING,
@@ -12,6 +30,7 @@ export interface User {
   email: string;
   initials: string;
   role: 'user' | 'admin';
+  subscriptionStatus: 'free' | 'pro';
 }
 
 export interface LeaseData {
@@ -59,4 +78,10 @@ export interface LeaseAnalysis {
   fileName: string;
   leaseData: LeaseData;
   fullText: string;
+}
+
+export interface ToastMessage {
+  id: number;
+  message: string;
+  type: 'success' | 'error';
 }
